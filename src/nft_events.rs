@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, time::Instant};
+use std::{collections::HashMap, marker::PhantomData, time::Instant};
 
 use actix::prelude::*;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
@@ -7,15 +7,9 @@ use redis::FromRedisValue;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    EventFilter, EventWebSocket, FromRedis, Server, SubscribeToEvents, UnsubscribeFromEvents,
+    AccountId, Balance, BlockHeight, EventFilter, EventWebSocket, FromRedis, NftTokenId, ReceiptId,
+    Server, SubscribeToEvents, TransactionId, UnsubscribeFromEvents,
 };
-
-type TransactionId = String;
-type ReceiptId = String;
-type AccountId = String;
-type NftTokenId = String;
-type BlockHeight = u64;
-type Balance = String;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NftMintEvent {
@@ -97,7 +91,7 @@ pub async fn nft_mint(
 }
 
 impl FromRedis for FullNftMintEvent {
-    fn from_redis(values: std::collections::HashMap<String, redis::Value>) -> anyhow::Result<Self> {
+    fn from_redis(values: HashMap<String, redis::Value>) -> anyhow::Result<Self> {
         match (
             serde_json::from_str::<NftEventContext>(&String::from_redis_value(
                 values.get("context").unwrap(),
@@ -181,7 +175,7 @@ pub async fn nft_transfer(
 }
 
 impl FromRedis for FullNftTransferEvent {
-    fn from_redis(values: std::collections::HashMap<String, redis::Value>) -> anyhow::Result<Self> {
+    fn from_redis(values: HashMap<String, redis::Value>) -> anyhow::Result<Self> {
         match (
             serde_json::from_str::<NftEventContext>(&String::from_redis_value(
                 values.get("context").unwrap(),
@@ -281,7 +275,7 @@ pub async fn nft_burn(
 }
 
 impl FromRedis for FullNftBurnEvent {
-    fn from_redis(values: std::collections::HashMap<String, redis::Value>) -> anyhow::Result<Self> {
+    fn from_redis(values: HashMap<String, redis::Value>) -> anyhow::Result<Self> {
         match (
             serde_json::from_str::<NftEventContext>(&String::from_redis_value(
                 values.get("context").unwrap(),

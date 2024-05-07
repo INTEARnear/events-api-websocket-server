@@ -1,3 +1,8 @@
+mod nft_events;
+mod potlock_events;
+mod redis_reader;
+mod trade_events;
+
 use std::{
     fs::File,
     io::BufReader,
@@ -16,15 +21,32 @@ use nft_events::{
     FullNftBurnEvent, FullNftMintEvent, FullNftTransferEvent, NftBurnFilter, NftMintFilter,
     NftTransferFilter,
 };
+use potlock_events::{
+    FullPotlockDonationEvent, FullPotlockPotDonationEvent, FullPotlockPotProjectDonationEvent,
+    PotlockDonationEventFilter, PotlockPotDonationEventFilter,
+    PotlockPotProjectDonationEventFilter,
+};
 use redis::aio::ConnectionManager;
 use redis_reader::{create_connection, stream_events, EventHandler};
 use serde::{de::DeserializeOwned, Serialize};
-
-mod nft_events;
-mod redis_reader;
+use trade_events::{
+    FullTradePoolChangeEvent, FullTradePoolEvent, FullTradeSwapEvent, TradePoolChangeEventFilter,
+    TradePoolEventFilter, TradeSwapEventFilter,
+};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
+
+pub type TransactionId = String;
+pub type ReceiptId = String;
+pub type AccountId = String;
+pub type NftTokenId = String;
+pub type BlockHeight = u64;
+pub type Balance = String;
+pub type DonationId = u64;
+pub type ProjectId = AccountId;
+pub type TimestampMs = u64;
+pub type PoolId = String;
 
 // EventWebSocket is the client, Server is the server.
 // Typical flow:
@@ -38,10 +60,34 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct Server {
     redis_connection: ConnectionManager,
+
     nft_mint_sockets: Arc<DashSet<Addr<EventWebSocket<FullNftMintEvent, NftMintFilter>>>>,
     nft_transfer_sockets:
         Arc<DashSet<Addr<EventWebSocket<FullNftTransferEvent, NftTransferFilter>>>>,
     nft_burn_sockets: Arc<DashSet<Addr<EventWebSocket<FullNftBurnEvent, NftBurnFilter>>>>,
+
+    potlock_donation_sockets:
+        Arc<DashSet<Addr<EventWebSocket<FullPotlockDonationEvent, PotlockDonationEventFilter>>>>,
+    potlock_pot_project_donation_sockets: Arc<
+        DashSet<
+            Addr<
+                EventWebSocket<
+                    FullPotlockPotProjectDonationEvent,
+                    PotlockPotProjectDonationEventFilter,
+                >,
+            >,
+        >,
+    >,
+    potlock_pot_donation_sockets: Arc<
+        DashSet<Addr<EventWebSocket<FullPotlockPotDonationEvent, PotlockPotDonationEventFilter>>>,
+    >,
+
+    trade_pool_sockets:
+        Arc<DashSet<Addr<EventWebSocket<FullTradePoolEvent, TradePoolEventFilter>>>>,
+    trade_swap_sockets:
+        Arc<DashSet<Addr<EventWebSocket<FullTradeSwapEvent, TradeSwapEventFilter>>>>,
+    trade_pool_change_sockets:
+        Arc<DashSet<Addr<EventWebSocket<FullTradePoolChangeEvent, TradePoolChangeEventFilter>>>>,
 }
 
 impl Actor for Server {
@@ -61,6 +107,38 @@ impl Actor for Server {
         tokio::spawn(stream_events(
             "nft_burn",
             SocketEventHandler(Arc::clone(&self.nft_burn_sockets)),
+            self.redis_connection.clone(),
+        ));
+
+        tokio::spawn(stream_events(
+            "potlock_donation",
+            SocketEventHandler(Arc::clone(&self.potlock_donation_sockets)),
+            self.redis_connection.clone(),
+        ));
+        tokio::spawn(stream_events(
+            "potlock_pot_project_donation",
+            SocketEventHandler(Arc::clone(&self.potlock_pot_project_donation_sockets)),
+            self.redis_connection.clone(),
+        ));
+        tokio::spawn(stream_events(
+            "potlock_pot_donation",
+            SocketEventHandler(Arc::clone(&self.potlock_pot_donation_sockets)),
+            self.redis_connection.clone(),
+        ));
+
+        tokio::spawn(stream_events(
+            "trade_pool",
+            SocketEventHandler(Arc::clone(&self.trade_pool_sockets)),
+            self.redis_connection.clone(),
+        ));
+        tokio::spawn(stream_events(
+            "trade_swap",
+            SocketEventHandler(Arc::clone(&self.trade_swap_sockets)),
+            self.redis_connection.clone(),
+        ));
+        tokio::spawn(stream_events(
+            "trade_pool_change",
+            SocketEventHandler(Arc::clone(&self.trade_pool_change_sockets)),
             self.redis_connection.clone(),
         ));
     }
@@ -205,13 +283,23 @@ async fn main() -> std::io::Result<()> {
     .await;
     let server = Server {
         redis_connection,
+
         nft_mint_sockets: Arc::new(DashSet::new()),
         nft_transfer_sockets: Arc::new(DashSet::new()),
         nft_burn_sockets: Arc::new(DashSet::new()),
+
+        potlock_donation_sockets: Arc::new(DashSet::new()),
+        potlock_pot_project_donation_sockets: Arc::new(DashSet::new()),
+        potlock_pot_donation_sockets: Arc::new(DashSet::new()),
+
+        trade_pool_sockets: Arc::new(DashSet::new()),
+        trade_swap_sockets: Arc::new(DashSet::new()),
+        trade_pool_change_sockets: Arc::new(DashSet::new()),
     };
     let server_addr = server.start();
 
     let tls_config = if let Ok(files) = std::env::var("SSL") {
+        #[allow(clippy::iter_nth_zero)]
         let mut certs_file = BufReader::new(File::open(files.split(',').nth(0).unwrap()).unwrap());
         let mut key_file = BufReader::new(File::open(files.split(',').nth(1).unwrap()).unwrap());
         let tls_certs = rustls_pemfile::certs(&mut certs_file)
@@ -243,7 +331,32 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/nft_transfer").route(web::get().to(nft_events::nft_transfer)))
             .service(web::resource("/nft_burn").route(web::get().to(nft_events::nft_burn)));
 
-        let api_v0 = web::scope("/v0").service(nft);
+        let potlock = web::scope("/potlock")
+            .service(
+                web::resource("/potlock_donation")
+                    .route(web::get().to(potlock_events::potlock_donation)),
+            )
+            .service(
+                web::resource("/potlock_pot_project_donation")
+                    .route(web::get().to(potlock_events::potlock_pot_project_donation)),
+            )
+            .service(
+                web::resource("/potlock_pot_donation")
+                    .route(web::get().to(potlock_events::potlock_pot_donation)),
+            );
+
+        let trade = web::scope("/trade")
+            .service(web::resource("/trade_pool").route(web::get().to(trade_events::trade_pool)))
+            .service(web::resource("/trade_swap").route(web::get().to(trade_events::trade_swap)))
+            .service(
+                web::resource("/trade_pool_change")
+                    .route(web::get().to(trade_events::trade_pool_change)),
+            );
+
+        let api_v0 = web::scope("/v0")
+            .service(nft)
+            .service(potlock)
+            .service(trade);
 
         App::new()
             .app_data(web::Data::new(server_addr.clone()))
