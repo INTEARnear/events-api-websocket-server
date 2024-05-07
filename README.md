@@ -16,4 +16,12 @@ WebSocket endpoints:
 - `/v0/trade/trade_swap`, optional message `{"involved_token_account_ids": <string>, "account_id": <string>}`: Get swap events, contains all raw pool swap events and net balance changes. All query parameters are optional. `involved_token_account_ids` is an account id of the token contract. Can contain multiple (usually you'd want 1 or 2) comma-separated values to filter by all these tokens. `account_id` is an account id of the trader.
 - `/v0/trade/trade_pool_change`, optional message `{"pool_id": <string>}`: Get pool change events, when someone swaps, adds/removes liquidity, etc. All query parameters are optional. `pool_id` is a string in format `REF-<number>`.
 
+Protocol:
+
+- (optional) Client -> Server: filter message ('optional message', different for each event)
+- Server -> Client: Event JSON
+- Server -> Client: Event 2 JSON
+
+and so on. The filter can be changed in the middle of connection, and will be applied immediately.
+
 Currently, only NFT API is implemented.
