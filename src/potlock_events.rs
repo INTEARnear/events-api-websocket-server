@@ -24,6 +24,7 @@ pub struct PotlockDonationEvent {
     pub donation_id: DonationId,
     pub donor_id: AccountId,
     pub total_amount: Balance,
+    pub account_id: AccountId,
     pub message: Option<String>,
     pub donated_at: TimestampMs,
     pub project_id: ProjectId,
@@ -138,7 +139,6 @@ pub struct PotlockDonationEventFilter {
 
 impl EventFilter<FullPotlockDonationEvent> for PotlockDonationEventFilter {
     fn matches(&self, event: &FullPotlockDonationEvent) -> bool {
-        println!("{event:?}");
         if let Some(project_id) = &self.project_id {
             if event.event.project_id != *project_id {
                 return false;
